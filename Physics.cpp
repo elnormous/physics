@@ -28,30 +28,93 @@ namespace BearSlayer
 
 	}
     
-    bool Physics::checkCollision(Body* body1, Body* body2, const Vec2& change)
+    bool Physics::checkCollision(Body* body1, Body* body2)
     {
         if (body1->_shape == Body::Shape::Box &&
             body2->_shape == Body::Shape::Box)
         {
-            return boxBoxCheck(body1->_position + change, body1->_size, body2->_position, body2->_size);
+            return boxBoxCheck(body1->_position, body1->_size, body2->_position, body2->_size);
         }
         else if (body1->_shape == Body::Shape::Circle &&
                  body2->_shape == Body::Shape::Circle)
         {
-            return circleCircleCheck(body1->_position + change, body1->_radius, body2->_position, body2->_radius);
+            return circleCircleCheck(body1->_position, body1->_radius, body2->_position, body2->_radius);
         }
         else if (body1->_shape == Body::Shape::Circle &&
                  body2->_shape == Body::Shape::Box)
         {
-            return circleBoxCheck(body1->_position + change, body1->_radius, body2->_position, body2->_size);
+            return circleBoxCheck(body1->_position, body1->_radius, body2->_position, body2->_size);
         }
         else if (body1->_shape == Body::Shape::Box &&
                  body2->_shape == Body::Shape::Circle)
         {
-            return circleBoxCheck(body2->_position, body2->_radius, body1->_position + change, body1->_size);
+            return circleBoxCheck(body2->_position, body2->_radius, body1->_position, body1->_size);
         }
         
         return false;
+    }
+    
+    void Physics::separate(Body* body1, Body* body2, const cocos2d::Vec2& change)
+    {
+        Vec2 diff = body1->_position - body2->_position;
+        
+        if (body1->_shape == Body::Shape::Box &&
+            body2->_shape == Body::Shape::Box)
+        {
+            Size halfSizeSum = (body1->_size / 2.0f) + (body2->_size / 2.0f);
+            
+            // move back body1
+            if (mabs(diff.x) > mabs(diff.y))
+            {
+                if (diff.x > 0.0f)
+                {
+                    body1->_position.x = body2->_position.x + halfSizeSum.width;
+                }
+                else
+                {
+                    body1->_position.x = body2->_position.x - halfSizeSum.width;
+                }
+            }
+            else
+            {
+                if (diff.y > 0.0f)
+                {
+                    body1->_position.y = body2->_position.y + halfSizeSum.height;
+                }
+                else
+                {
+                    body1->_position.y = body2->_position.y - halfSizeSum.height;
+                }
+            }
+        }
+        else if (body1->_shape == Body::Shape::Circle &&
+                 body2->_shape == Body::Shape::Circle)
+        {
+            if (diff.isZero())
+            {
+                diff = Vec2(1.0f, 0.0f);
+            }
+            else
+            {
+                diff.normalize();
+            }
+            
+            float radiusSum = (body1->_radius / 2.0f) + (body2->_radius / 2.0f);
+            
+            body1->_position = body2->_position + (diff * radiusSum);
+        }
+        else if (body1->_shape == Body::Shape::Box &&
+            body2->_shape == Body::Shape::Circle)
+        {
+            // TODO: implement
+            body1->_position -= change;
+        }
+        else if (body1->_shape == Body::Shape::Circle &&
+                 body2->_shape == Body::Shape::Box)
+        {
+            // TODO: implement
+            body1->_position -= change;
+        }
     }
     
 	void Physics::update(float delta, uint32_t iterations)
@@ -73,11 +136,13 @@ namespace BearSlayer
                 if (body->_enabled &&
                     (!body->_velocity.isZero() || body->_sensor))
                 {
-                    Vec2 change = (body->_velocity * delta) / (float)iterations;
+                    Vec2 change = (body->_velocity * delta) / static_cast<float>(iterations);
+                    Vec2 originalChange = change;
+                    
+                    body->_position += change;
+                    body->updateSpace();
                     
                     AABB2 bodyAABB = body->_aabb;
-                    bodyAABB._min += (change + body->_position);
-                    bodyAABB._max += (change + body->_position);
                     
                     std::vector<Body*> possibleBodies;
                     
@@ -89,12 +154,7 @@ namespace BearSlayer
                                 otherBody->_enabled &&
                                 (body->_mask & otherBody->_category) != 0)
                             {
-                                // TODO: try to use distance instead of aabb check
-                                AABB2 otherBodyAABB = body->_aabb;
-                                otherBodyAABB._min += (otherBody->_position);
-                                otherBodyAABB._max += (otherBody->_position);
-                                
-                                if (bodyAABB.intersects(otherBodyAABB))
+                                if (bodyAABB.intersects(otherBody->_aabb))
                                 {
                                     possibleBodies.push_back(otherBody);
                                 }
@@ -112,10 +172,14 @@ namespace BearSlayer
                         return mabs(diff1.x) + mabs(diff1.y) < mabs(diff2.x) + mabs(diff2.y);
                     });
                     
+                    
                     for (Body* otherBody : possibleBodies)
                     {
-                        if (checkCollision(body, otherBody, change))
+                        if (checkCollision(body, otherBody))
                         {
+                            // push body back
+                            // apply forces
+                            
                             Vec2 newNormal = body->_position - otherBody->_position;
                             
                             /*Vec2 sizeSum = Vec2(body->_size.width / 2.0f + otherBody->_size.width / 2.0f,
@@ -129,14 +193,17 @@ namespace BearSlayer
                                 if (newNormal.x != 0.0f) newNormal.x /= mabs(newNormal.x);
                                 newNormal.y = 0.0f;
                             }
-                            else
+                            else if (mabs(newNormal.x) < mabs(newNormal.y))
                             {
                                 newNormal.x = 0.0f;
                                 if (newNormal.y != 0.0f) newNormal.y /= mabs(newNormal.y);
                             }
                             
-                            if (!otherBody->isSensor())
+                            if (!body->isSensor() && !otherBody->isSensor())
                             {
+                                separate(body, otherBody, originalChange);
+                                body->updateSpace();
+                                
                                 //normal
                                 if (!newNormal.isZero())
                                 {
@@ -151,11 +218,6 @@ namespace BearSlayer
                                     }
                                 }
                             }
-                            
-                            /*if (newNormal.x != 0.0f)
-                            {
-                                log("GOT");
-                            }*/
                             
                             Contact contact;
                             contact.bodyA = body;
@@ -175,9 +237,7 @@ namespace BearSlayer
                         }
                     }
                     
-                    body->_velocity = (change / delta) * (float)iterations;
-                    body->_position += change;
-                    body->updateSpace();
+                    body->_velocity = (change / delta) * static_cast<float>(iterations);
                 }
             }
 		}

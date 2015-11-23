@@ -32,14 +32,16 @@ namespace BearSlayer
         
         Body* getClosestBody(const cocos2d::Vec2& position, uint32_t mask = 0) const;
         
-        bool checkCollision(Body* body1, Body* body2, const cocos2d::Vec2& change = cocos2d::Vec2());
-        
         void reset();
         
         Space* getSpace(int32_t spaceId);
         
+        bool checkCollision(Body* body1, Body* body2);
+        
 	private:
 		DISALLOW_COPY_AND_ASSIGN(Physics);
+        
+        void separate(Body* body1, Body* body2, const cocos2d::Vec2& change);
 
 		Bodies _bodies;
         cocos2d::AABB2 _worldSize;
